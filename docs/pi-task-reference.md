@@ -168,6 +168,7 @@ reply to a running task are refused with exit code 1.
 | PI_TASK_SESSION_DIR | ~/.pi/agent/sessions/tasks | Pi session storage; changing it prevents finding old sessions |
 | PI_TASK_OWNER | Empty | Default owner for run |
 | PI_TASK_MODEL | Empty | Default model when --model is absent (if empty, Pi uses its own default) |
+| PI_TASK_PREFLIGHT | `bin/pi-preflight` if present | Model-path check run before run/reply/approve, and again in parallel when Pi auto-retries a connection error (UND_ERR_SOCKET, other side closed, ECONNRESET…). Logged as `preflight` events. Template: `bin/pi-preflight.example` |
 | PI_TASK_THINKING | medium | Default thinking level |
 | PI_TASK_NOTIFY_PREFIX | Empty | Default notify prefix when --notify-prefix is absent |
 | PI_NOTIFY_URL | Empty | Completion webhook endpoint (used when notify prefix is not set) |

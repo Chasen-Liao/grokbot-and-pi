@@ -32,6 +32,7 @@ Bot 的 agent id，在 `/home/box/agent-data/agents/<ID>/profile.json` 的目录
 - 只读的活加 `--no-write`；不需要联网加 `--no-web`；难活才 `--thinking high`。
 - 追加要求用 `pi-task reply <ID> '<补充>' --owner <ID>`，校验 owner 并沿用同一会话与目录。
 - 派完告诉用户「已派出」，然后**不要结束当前轮**：Grok Bot 的电脑在 Bot 空闲时会睡眠甚至重启，Pi 会跟着被冻住或杀掉。用一次长时间阻塞的 AwaitShell（单次最长约 13 分钟，不要轮询、不要 sleep）等这个后台 Shell 跑完，跑完立刻验收。挂着等基本不耗 Bot 额度。
+- 电脑睡醒是常态：刚醒时网关链路（如 Tailscale）可能端口通但请求挂住，2 分钟后报 `UND_ERR_SOCKET`。配了 `bin/pi-preflight` 时 pi-task 会在 run/reply/approve 前先测通路、不健康就重连并等它恢复；没配就自己先测一次网关健康接口再派。遇到这类连接错误，先测通路再 reply 续跑，别直接重试。
 - 一次等不完就再等一次；用户发来新消息时先回他，再接着等。
 - webhook 只是兜底：万一这一轮还是结束了，它会把 Bot 单独叫醒。
 

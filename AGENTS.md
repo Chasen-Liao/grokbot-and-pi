@@ -127,6 +127,7 @@ cd /tmp/grokbot-and-pi
    ~/tools/pi-call/pi-task run /tmp "在 /tmp/gap-smoke.txt 中写入 gap-ok 并自查结束" --session smoke-gap --owner <BOT_ID> --notify-prefix <BOT>
    ```
 2. 向用户简要说明已派发最小任务，**不要结束当前轮**，用一次长时间阻塞的 AwaitShell 等它跑完（Bot 空闲时电脑可能睡眠或重启，会冻住 Pi）；Webhook 唤醒只是兜底。
+   - 电脑刚从睡眠醒来时，Tailscale 等链路可能还没恢复（端口通但请求挂住，最后报 `UND_ERR_SOCKET`）。所以派活前先测模型通路：如果走网关，按 `bin/pi-preflight.example` 配好 `bin/pi-preflight`，`pi-task` 会在 run/reply/approve 前自动检查、必要时重连再开跑；Pi 遇到连接错误自动重试时也会再跑一次。
 3. **被 Webhook 唤醒后**：
    - 运行检查自身任务：
      ```bash

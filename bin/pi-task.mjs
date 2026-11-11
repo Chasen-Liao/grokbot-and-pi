@@ -712,6 +712,16 @@ function execute(id, prompt, timeoutSec, idleTimeoutSec) {
       appendEvent(dir, "extension_error", undefined, rec.error);
       return;
     }
+    if (type === "auto_retry_start" && process.env.PI_TASK_PREFLIGHT &&
+        /UND_ERR|socket|other side closed|ECONNRESET|ETIMEDOUT|fetch failed|connection error|terminated/i.test(rec.errorMessage || "")) {
+      // connection error (often right after the box wakes): heal the model path in parallel with Pi's retry
+      try {
+        const pf = spawn(process.env.PI_TASK_PREFLIGHT, [], { stdio: "ignore" });
+        pf.on("exit", (c) => appendEvent(dir, "preflight", undefined, c === 0 ? "ok" : `exit ${c}`));
+        pf.on("error", (e) => appendEvent(dir, "preflight", undefined, `spawn failed: ${e.message}`));
+        appendEvent(dir, "preflight", undefined, "started after connection error");
+      } catch (e) { appendEvent(dir, "preflight", undefined, `spawn failed: ${e.message}`); }
+    }
     if (
       type === "compaction_start" ||
       type === "compaction_end" ||

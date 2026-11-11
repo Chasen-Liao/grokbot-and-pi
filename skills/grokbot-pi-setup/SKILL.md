@@ -22,6 +22,7 @@ description: 第一次让 Grok Bot 把执行活派给电脑上的 Pi 之前用�
 Pi 能用的模型都行，挑你手上有的（详情参见 `docs/quota.md`）：
 - 直接用官方 API key 或中转站：DeepSeek、OpenRouter 等，按 Pi 文档配置（如 `~/.pi/agent/models.json` 或 `pi /login`）。
 - 用自建网关统一管理（可选）：比如 Magpie，把订阅或各家 key 统一接进去。若部署在 VPS 上，**务必只监听 Tailscale 内网地址，严禁开放公网端口**，并开启 token 认证。
+  - 走网关时建议配通路预检：`cp bin/pi-preflight.example ~/tools/pi-call/pi-preflight`，改好里面的健康接口和 Tailscale/转发脚本路径。Bot 电脑经常睡眠，醒来后链路可能端口通但请求挂住，pi-task 会在派活前用它检查、必要时重连。
 - 直接使用 Pi 默认配置：如果 Pi 本身已经配置好默认模型，后续派活时甚至不需要指定 `--model`。
 
 验证模型连通性：
