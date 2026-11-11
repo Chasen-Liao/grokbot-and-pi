@@ -57,7 +57,10 @@ cd /tmp/grokbot-and-pi && ./install.sh
 3. **一键安全安装脚本（`install.sh`）**：自动化环境检查（Node >= 22 与 Pi CLI），安全复制并配置权限；
 4. **内置 Grok Bot 专属技能生态（Skills）**：开箱即用的 `grokbot-pi-setup` 与 `grokbot-pi-dispatch`；
 5. **严谨的 `--owner` 闭环验收流程**：多 Bot 独立 pending 与 ack，拒绝越权确认，任务失败绝不盲目重跑；
-6. **Agent 自动化向导（`AGENTS.md`）**：专门面向 AI Agent 编写的 7 步端到端自配置与验收指南。
+6. **Agent 自动化向导（`AGENTS.md`）**：专门面向 AI Agent 编写的 7 步端到端自配置与验收指南；
+7. **内置防删库跑路扩展（`pi-guard`）**：默认启用，对 `rm -rf /`、`/workspace` 等灾难性递归删除、`find -delete`、`mkfs` 及 `dd of=/dev/` 精准拦截，支持 Webhook `needs_approval` 发起人机放行机制（`approve` / `deny`，详见 [docs/security.md](docs/security.md)）；
+8. **安全的追问所有权校验（`reply --owner`）**：`reply` 子命令支持 `--owner <id>` 强校验，不一致直接拒绝（exit 2），杜绝多 Bot 间串台越权；
+9. **空闲超时熔断机制（`--idle-timeout`）**：支持 `--idle-timeout`（及 `PI_TASK_IDLE_TIMEOUT`，默认 300 秒），Pi 长期无新 RPC 事件时自动熔断为 failed（标记 idle timeout）并照常发出通知，防止任务无限死锁。
 
 ---
 

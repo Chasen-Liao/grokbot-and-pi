@@ -57,7 +57,10 @@ This project is built upon and improved from [robbin/grokbot-local-agent](https:
 3. **Safe One-Step Installer (`install.sh`)**: Automated dependency verification (Node >= 22 and Pi CLI) with non-destructive copying and permission setup;
 4. **Built-in Grok Bot Skills Ecosystem**: Ready-to-use `grokbot-pi-setup` and `grokbot-pi-dispatch` skills;
 5. **Rigorous `--owner` Closed-Loop Acceptance**: Independent per-bot pending/ack filtering without cross-bot interference, preventing automatic re-runs on failure;
-6. **Agent Automation Guide (`AGENTS.md`)**: A dedicated 7-step guide enabling AI agents to self-configure and run end-to-end smoke verification.
+6. **Agent Automation Guide (`AGENTS.md`)**: A dedicated 7-step guide enabling AI agents to self-configure and run end-to-end smoke verification;
+7. **Built-in Catastrophic Deletion Guard (`pi-guard`)**: Enabled by default, narrowly intercepting catastrophic deletions (`rm -rf /`, `/workspace`, wildcards), `find -delete`, `mkfs`, and `dd of=/dev/`, supporting human-in-the-loop approvals via Webhook `needs_approval` (`approve` / `deny`, see [docs/security.md](docs/security.md));
+8. **Ownership Verification for Replies (`reply --owner`)**: The `reply` subcommand accepts `--owner <id>` and strictly rejects mismatches (exit 2), preventing cross-bot interference;
+9. **Idle Timeout Protection (`--idle-timeout`)**: Supports `--idle-timeout` (and `PI_TASK_IDLE_TIMEOUT`, default 300s), automatically failing hanging tasks with reason `idle timeout` and notifying the bot when no RPC events are received.
 
 ---
 

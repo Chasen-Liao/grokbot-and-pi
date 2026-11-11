@@ -42,6 +42,13 @@ mkdir -p "$TARGET_DIR"
 cp -p "$SCRIPT_DIR/bin/"* "$TARGET_DIR/"
 chmod +x "$TARGET_DIR/pi-task" "$TARGET_DIR/pi-task.mjs" "$TARGET_DIR/pi-call.mjs" "$TARGET_DIR/pi-run"
 
+# 复制 extensions/ 扩展到目标目录
+if [ -d "$SCRIPT_DIR/extensions" ]; then
+  mkdir -p "$TARGET_DIR/extensions"
+  cp -p "$SCRIPT_DIR/extensions/"* "$TARGET_DIR/extensions/"
+  echo "  ✓ 已复制扩展: extensions/"
+fi
+
 echo "  ✓ 已复制并配置可执行权限: pi-task, pi-task.mjs, pi-call.mjs, pi-run"
 
 # 4. 打印后续指引

@@ -66,7 +66,7 @@ cd /tmp/grokbot-and-pi
 ```
 
 ### 判定完成标准
-- 目标目录 `~/tools/pi-call/` 下存在 `pi-task`、`pi-task.mjs`、`pi-call.mjs`、`pi-run` 且均具备可执行权限（`chmod +x`）。
+- 目标目录 `~/tools/pi-call/` 下存在 `pi-task`、`pi-task.mjs`、`pi-call.mjs`、`pi-run` 且均具备可执行权限（`chmod +x`），`extensions/pi-guard.ts` 已同步安装且 guard 默认开启。
 - 运行 `~/tools/pi-call/pi-task --help` 正常打印使用指南。
 
 ---

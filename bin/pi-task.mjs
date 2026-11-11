@@ -17,7 +17,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const TASK_ROOT = resolve(process.env.PI_TASK_DIR || join(homedir(), ".pi", "tasks"));
 const SESSION_DIR =
@@ -28,6 +29,7 @@ const DEFAULT_MODEL = process.env.PI_TASK_MODEL || null;
 const DEFAULT_THINKING = process.env.PI_TASK_THINKING || "medium";
 const DEFAULT_NOTIFY_PREFIX = process.env.PI_TASK_NOTIFY_PREFIX || null;
 const DEFAULT_TIMEOUT = 300; // seconds, same default as pi-call.mjs
+const DEFAULT_IDLE_TIMEOUT = 300; // seconds, idle timeout for no RPC events
 const EVENT_TEXT_MAX = 500;
 const TERMINAL = new Set(["done", "failed", "cancelled", "interrupted"]);
 const EXIT = { done: 0, failed: 1, timeout: 124, cancelled: 130 };
@@ -283,7 +285,19 @@ function assertSessionFree(session, ignoreId) {
 
 // ------------------------------------------------------------ pi invocation
 
-function piArgs(session, model, thinking, write, web) {
+function findGuardExtensionPath() {
+  const currentFile = fileURLToPath(import.meta.url);
+  const currentDir = dirname(currentFile);
+  // 1. check ../extensions/pi-guard.ts (running in workspace: bin/../extensions/pi-guard.ts)
+  const p1 = resolve(currentDir, "..", "extensions", "pi-guard.ts");
+  if (existsSync(p1)) return p1;
+  // 2. check ./extensions/pi-guard.ts (installed in TARGET_DIR: TARGET_DIR/extensions/pi-guard.ts)
+  const p2 = resolve(currentDir, "extensions", "pi-guard.ts");
+  if (existsSync(p2)) return p2;
+  return null;
+}
+
+function piArgs(session, model, thinking, write, web, guardDisabled) {
   const args = [
     "--mode", "rpc",
     "--session-dir", SESSION_DIR,
@@ -301,6 +315,12 @@ function piArgs(session, model, thinking, write, web) {
     (write ? "read,grep,find,ls,bash,edit,write" : "read,grep,find,ls") +
     (web ? ",web_search,fetch_content,get_search_content" : "");
   args.push("--tools", tools);
+  if (!guardDisabled) {
+    const guardPath = findGuardExtensionPath();
+    if (guardPath) {
+      args.push("-e", guardPath);
+    }
+  }
   return args;
 }
 
@@ -344,22 +364,30 @@ function getNotifyConfig(prefix) {
 // Run one prompt turn inside a task, stream events, update status, exit.
 // Notify the Bot on completion: POST {source,id,owner,state,exit_code} to webhook URL.
 // A detached notifier receives the Bearer secret via environment, not argv; skip if unconfigured.
-function notify(dir, id, owner, state, code, notifyPrefix) {
+function notify(dir, id, owner, state, code, notifyPrefix, extra = {}) {
   const { url, key } = getNotifyConfig(notifyPrefix);
   if (!url || !key || process.env.PI_NOTIFY_OFF) return;
+  const payload = {
+    source: "pi-task",
+    id,
+    owner: owner ?? null,
+    state,
+    exit_code: code,
+    ...extra,
+  };
   const js = `const [u,b,f]=process.argv.slice(1);const fs=require("fs");
 fetch(u,{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+process.env.__PI_NOTIFY_SECRET},body:b,signal:AbortSignal.timeout(15000)})
 .then(r=>fs.appendFileSync(f,JSON.stringify({ts:new Date().toISOString(),type:"notify",text:"http "+r.status})+"\\n"))
 .catch(e=>fs.appendFileSync(f,JSON.stringify({ts:new Date().toISOString(),type:"notify",text:"error "+String(e.message||e).slice(0,200)})+"\\n"));`;
   try {
     const notifyEnv = { ...process.env, __PI_NOTIFY_SECRET: key };
-    const c = spawn(process.execPath, ["-e", js, url, JSON.stringify({ source: "pi-task", id, owner: owner ?? null, state, exit_code: code }), join(dir, "events.jsonl")],
+    const c = spawn(process.execPath, ["-e", js, url, JSON.stringify(payload), join(dir, "events.jsonl")],
       { detached: true, stdio: "ignore", env: notifyEnv });
     c.unref();
   } catch { /* Notification failure does not affect results; pending provides recovery. */ }
 }
 
-function execute(id, prompt, timeoutSec) {
+function execute(id, prompt, timeoutSec, idleTimeoutSec) {
   const dir = taskDir(id);
   const status = readStatus(id);
   const runs = Array.isArray(status.runs) ? status.runs : [];
@@ -383,9 +411,10 @@ function execute(id, prompt, timeoutSec) {
   const thinking = opts.thinking || DEFAULT_THINKING;
   const allowWrite = opts.write !== false;
   const allowWeb = opts.web !== false;
+  const guardDisabled = process.env.PI_GUARD === "off" || opts.guard === "off";
   const session = status.session;
 
-  const args = piArgs(session, model, thinking, allowWrite, allowWeb);
+  const args = piArgs(session, model, thinking, allowWrite, allowWeb, guardDisabled);
 
   // Remove notification URL/secret and unrelated cloud tokens from the Pi child's environment.
   const piEnv = { ...process.env };
@@ -395,6 +424,11 @@ function execute(id, prompt, timeoutSec) {
       delete piEnv[k];
     }
   }
+  piEnv.PI_TASK_DIR_CURRENT = dir;
+  if (guardDisabled) {
+    piEnv.PI_GUARD = "off";
+  }
+
   const child = spawn(PI_BIN, args, {
     cwd: status.cwd,
     env: piEnv,
@@ -415,20 +449,65 @@ function execute(id, prompt, timeoutSec) {
   let finished = false;
   let aborting = false;
   let timedOut = false;
+  let idleTimedOut = false;
   let timeoutTimer = null;
+  let idleTimer = null;
   let graceTimer = null;
   const promptId = `p${n}`;
 
   const abort = () => {
-    appendEvent(dir, "abort_sent", undefined, timedOut ? "timeout" : "signal");
+    appendEvent(dir, "abort_sent", undefined, timedOut ? "timeout" : idleTimedOut ? "idle_timeout" : "signal");
     send({ type: "abort" });
   };
+
+  const resetIdleTimer = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    if (finished) return;
+    if (idleTimeoutSec && idleTimeoutSec > 0) {
+      idleTimer = setTimeout(() => {
+        if (finished) return;
+        idleTimedOut = true;
+        lastError = "idle timeout";
+        appendEvent(dir, "idle_timeout", undefined, `${idleTimeoutSec}s`);
+        abort();
+        graceTimer = setTimeout(() => finish(EXIT.failed), 5000);
+      }, idleTimeoutSec * 1000);
+    }
+  };
+
+  const notifiedApprovals = new Set();
+  function checkApprovals() {
+    const approvalsPath = join(dir, "approvals.jsonl");
+    if (!existsSync(approvalsPath)) return;
+    try {
+      const content = readFileSync(approvalsPath, "utf8");
+      const lines = content.split("\n").filter((l) => l.trim());
+      for (const line of lines) {
+        try {
+          const item = JSON.parse(line);
+          if (item && item.req && !notifiedApprovals.has(item.req)) {
+            notifiedApprovals.add(item.req);
+            appendEvent(dir, "approval_requested", undefined, `req=${item.req} cmd=${item.command}`);
+            const notifyPrefix = status.notify_prefix ?? null;
+            notify(dir, id, status.owner ?? null, "needs_approval", null, notifyPrefix, {
+              req: item.req,
+              command: item.command,
+            });
+          }
+        } catch {}
+      }
+    } catch {}
+  }
+  const approvalTimer = setInterval(checkApprovals, 200);
 
   function finish(code) {
     if (finished) return;
     finished = true;
     clearTimeout(timeoutTimer);
+    clearTimeout(idleTimer);
     clearTimeout(graceTimer);
+    clearInterval(approvalTimer);
+    checkApprovals();
 
     const end = iso();
     let st = null;
@@ -447,6 +526,7 @@ function execute(id, prompt, timeoutSec) {
       st.exit_code = code;
       st.pid = null;
       if (code === EXIT.timeout) st.error = "timeout";
+      else if (idleTimedOut) st.error = "idle timeout";
       else if (code === EXIT.done || code === EXIT.cancelled) st.error = null;
       else st.error = lastError || st.error || "failed";
       const last = Array.isArray(st.runs) && st.runs.length
@@ -480,7 +560,9 @@ function execute(id, prompt, timeoutSec) {
           ? "cancelled"
           : code === EXIT.timeout
             ? "timeout"
-            : st?.error || lastError || stderrBuf.trim() || "failed";
+            : idleTimedOut
+              ? "idle timeout"
+              : st?.error || lastError || stderrBuf.trim() || "failed";
       process.stderr.write(`pi-task: ${why}\n`);
     }
 
@@ -553,6 +635,8 @@ function execute(id, prompt, timeoutSec) {
   });
 
   function handleEvent(rec) {
+    resetIdleTimer();
+    checkApprovals();
     const type = rec.type;
     if (type === "response") {
       if (rec.id !== promptId) return;
@@ -614,6 +698,7 @@ function execute(id, prompt, timeoutSec) {
       appendEvent(dir, "agent_settled", undefined, rec.aborted ? "aborted" : undefined);
       if (aborting) finish(EXIT.cancelled);
       else if (timedOut) finish(EXIT.timeout);
+      else if (idleTimedOut) finish(EXIT.failed);
       else if (lastError && !lastText) finish(EXIT.failed);
       else finish(lastText ? EXIT.done : EXIT.failed);
       return;
@@ -678,6 +763,7 @@ function execute(id, prompt, timeoutSec) {
   });
 
   send({ id: promptId, type: "prompt", message: prompt });
+  resetIdleTimer();
 }
 
 // -------------------------------------------------------------- subcommands
@@ -728,6 +814,19 @@ function timeoutOf(flags) {
   return n;
 }
 
+function idleTimeoutOf(flags) {
+  if (flags["idle-timeout"] !== undefined) {
+    const n = Number(flags["idle-timeout"]);
+    if (!Number.isFinite(n) || n < 0) usageError(`invalid --idle-timeout: ${flags["idle-timeout"]}`);
+    return n;
+  }
+  if (process.env.PI_TASK_IDLE_TIMEOUT !== undefined) {
+    const n = Number(process.env.PI_TASK_IDLE_TIMEOUT);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return DEFAULT_IDLE_TIMEOUT;
+}
+
 function newTaskId(session) {
   const base = `${session}-${stamp()}`;
   let id = base;
@@ -738,6 +837,7 @@ function newTaskId(session) {
 
 function cmdRun(pos, flags) {
   const timeoutSec = timeoutOf(flags);
+  const idleTimeoutSec = idleTimeoutOf(flags);
   const cwdArg = pos[0];
   const prompt = pos[1];
   if (!cwdArg || prompt === undefined || prompt === "") {
@@ -756,6 +856,7 @@ function cmdRun(pos, flags) {
   const model = typeof flags.model === "string" && flags.model ? flags.model : DEFAULT_MODEL;
   const thinking =
     typeof flags.thinking === "string" && flags.thinking ? flags.thinking : DEFAULT_THINKING;
+  const guard = flags.guard === "off" ? "off" : undefined;
 
   const id = newTaskId(session);
   const status = {
@@ -778,29 +879,155 @@ function cmdRun(pos, flags) {
       thinking,
       write: !flags["no-write"],
       web: !flags["no-web"],
+      guard: guard || "on",
     },
   };
   writeStatus(id, status);
   process.stdout.write(`TASK ${id}\n`);
-  execute(id, prompt, timeoutSec);
+  execute(id, prompt, timeoutSec, idleTimeoutSec);
 }
 
 function cmdReply(pos, flags) {
   const timeoutSec = timeoutOf(flags);
+  const idleTimeoutSec = idleTimeoutOf(flags);
   const id = pos[0];
   const prompt = pos[1];
   if (!id || prompt === undefined || prompt === "") {
     usageError('reply needs <id> and a non-empty "<prompt>"');
   }
-  if (flags.owner !== undefined) {
-    usageError("reply retains the original task owner and does not accept --owner");
-  }
   const status = readStatus(id);
+  if (flags.owner !== undefined) {
+    const expectedOwner = String(flags.owner).trim();
+    if (!expectedOwner) usageError("--owner needs a non-empty value");
+    if (status.owner !== expectedOwner) {
+      process.stderr.write(`pi-task: owner mismatch (expected "${expectedOwner}", task owner is "${ownerLabel(status)}")\n`);
+      process.exit(2);
+    }
+  }
   if (status.state === "running") fail(`task ${id} is still running; wait or cancel it first`);
   if (!TERMINAL.has(status.state)) fail(`task ${id} is in state ${status.state}`);
   if (!isDir(status.cwd)) fail(`task cwd no longer exists: ${status.cwd}`);
   assertSessionFree(status.session, id);
-  execute(id, prompt, timeoutSec);
+  execute(id, prompt, timeoutSec, idleTimeoutSec);
+}
+
+function findApprovalReq(dir, req) {
+  const p = join(dir, "approvals.jsonl");
+  if (!existsSync(p)) return null;
+  try {
+    const lines = readFileSync(p, "utf8").split("\n").filter(Boolean);
+    for (const line of lines) {
+      try {
+        const item = JSON.parse(line);
+        if (item && item.req === req) return item;
+      } catch {}
+    }
+  } catch {}
+  return null;
+}
+
+function appendApprovedCommand(dir, command) {
+  const p = join(dir, "approved.json");
+  let list = [];
+  if (existsSync(p)) {
+    try {
+      const data = JSON.parse(readFileSync(p, "utf8"));
+      if (Array.isArray(data)) list = data;
+    } catch {}
+  }
+  if (!list.includes(command)) {
+    list.push(command);
+    writeFileSync(p, JSON.stringify(list, null, 2) + "\n");
+  }
+}
+
+async function cmdApprove(pos, flags) {
+  const id = pos[0];
+  const req = pos[1];
+  if (!id || !req) {
+    usageError("approve needs <id> and <req>");
+  }
+  const status = readStatus(id);
+  if (flags.owner !== undefined) {
+    const expectedOwner = String(flags.owner).trim();
+    if (!expectedOwner) usageError("--owner needs a non-empty value");
+    if (status.owner !== expectedOwner) {
+      process.stderr.write(`pi-task: owner mismatch (expected "${expectedOwner}", task owner is "${ownerLabel(status)}")\n`);
+      process.exit(2);
+    }
+  }
+  const dir = taskDir(id);
+  const item = findApprovalReq(dir, req);
+  if (!item || !item.command) {
+    fail(`approval request not found: ${req}`);
+  }
+  appendApprovedCommand(dir, item.command);
+  appendEvent(dir, "approved", undefined, `req=${req} cmd=${item.command}`);
+
+  const msg = `req=${req} 已放行，可以执行这条命令：${item.command}`;
+
+  if (status.state === "running") {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      await sleep(200);
+      let now;
+      try { now = JSON.parse(readFileSync(statusPath(id), "utf8")); } catch { now = null; }
+      if (now && now.state !== "running") break;
+    }
+  }
+
+  const currentSt = readStatus(id);
+  if (currentSt.state === "running") {
+    fail(`task ${id} is still running; command added to approved.json, send message once finished`);
+  }
+  if (!isDir(currentSt.cwd)) fail(`task cwd no longer exists: ${currentSt.cwd}`);
+  assertSessionFree(currentSt.session, id);
+
+  const timeoutSec = timeoutOf(flags);
+  const idleTimeoutSec = idleTimeoutOf(flags);
+  execute(id, msg, timeoutSec, idleTimeoutSec);
+}
+
+async function cmdDeny(pos, flags) {
+  const id = pos[0];
+  const req = pos[1];
+  if (!id || !req) {
+    usageError("deny needs <id> and <req>");
+  }
+  const status = readStatus(id);
+  if (flags.owner !== undefined) {
+    const expectedOwner = String(flags.owner).trim();
+    if (!expectedOwner) usageError("--owner needs a non-empty value");
+    if (status.owner !== expectedOwner) {
+      process.stderr.write(`pi-task: owner mismatch (expected "${expectedOwner}", task owner is "${ownerLabel(status)}")\n`);
+      process.exit(2);
+    }
+  }
+  const dir = taskDir(id);
+  appendEvent(dir, "denied", undefined, `req=${req}`);
+
+  const msg = "被拒绝，不要执行，换个不删除的做法或者直接跳过";
+
+  if (status.state === "running") {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      await sleep(200);
+      let now;
+      try { now = JSON.parse(readFileSync(statusPath(id), "utf8")); } catch { now = null; }
+      if (now && now.state !== "running") break;
+    }
+  }
+
+  const currentSt = readStatus(id);
+  if (currentSt.state === "running") {
+    fail(`task ${id} is still running; wait or cancel it before denying`);
+  }
+  if (!isDir(currentSt.cwd)) fail(`task cwd no longer exists: ${currentSt.cwd}`);
+  assertSessionFree(currentSt.session, id);
+
+  const timeoutSec = timeoutOf(flags);
+  const idleTimeoutSec = idleTimeoutOf(flags);
+  execute(id, msg, timeoutSec, idleTimeoutSec);
 }
 
 function cmdStatus(pos) {
@@ -990,7 +1217,7 @@ function cmdAck(pos, flags) {
 
 // ------------------------------------------------------------------- argv
 
-const VALUE_FLAGS = new Set(["session", "timeout", "model", "thinking", "n", "owner", "notify-prefix"]);
+const VALUE_FLAGS = new Set(["session", "timeout", "idle-timeout", "model", "thinking", "n", "owner", "notify-prefix", "guard"]);
 const BOOL_FLAGS = new Set(["no-write", "no-web", "all", "help"]);
 
 function parseArgs(argv) {
@@ -1033,10 +1260,13 @@ function parseArgs(argv) {
 
 const USAGE = `usage:
   pi-task run <cwd> "<prompt>" --session <name> [--owner <agent id>] [--timeout sec]
+              [--idle-timeout sec] [--guard on|off]
               [--model provider/model] [--thinking off|low|medium|high]
               [--notify-prefix <name>]
               [--no-write] [--no-web]
-  pi-task reply <id> "<prompt>" [--timeout sec]      (retains the original owner)
+  pi-task reply <id> "<prompt>" [--owner <agent id>] [--timeout sec] [--idle-timeout sec]
+  pi-task approve <id> <req> [--owner <agent id>] [--timeout sec] [--idle-timeout sec]
+  pi-task deny <id> <req> [--owner <agent id>] [--timeout sec] [--idle-timeout sec]
   pi-task status <id>
   pi-task list [--all] [--owner <agent id>|none]
   pi-task log <id> [-n 30]
@@ -1046,12 +1276,16 @@ const USAGE = `usage:
 
   --owner <id>            dispatching agent; defaults to PI_TASK_OWNER, or null with a warning
   --owner none            match only tasks with owner=null
+  --idle-timeout <sec>    fail if Pi emits no RPC events for this long (default 300)
+  --guard on|off          disaster command protection extension (default on)
   --notify-prefix <name>  read webhook URL and key from <NAME>_PI_NOTIFY_URL and <NAME>_PI_NOTIFY_KEY
 
 env:
   PI_TASK_DIR            task store (default ~/.pi/tasks)
   PI_TASK_SESSION_DIR    Pi session dir (default ~/.pi/agent/sessions/tasks)
   PI_TASK_OWNER          default owner for run (fallback when --owner is absent)
+  PI_TASK_IDLE_TIMEOUT   default idle timeout in seconds (default 300)
+  PI_GUARD               disable guard extension when set to off (default on)
   PI_TASK_MODEL          default model for run (fallback when --model is absent)
   PI_TASK_THINKING       default thinking level (default: medium)
   PI_TASK_NOTIFY_PREFIX  default notify prefix (fallback when --notify-prefix is absent)
@@ -1071,7 +1305,7 @@ async function main() {
   }
 
   const known = new Set([
-    "run", "reply", "status", "list", "log", "cancel", "pending", "ack",
+    "run", "reply", "approve", "deny", "status", "list", "log", "cancel", "pending", "ack",
   ]);
   if (!known.has(cmd)) usageError(`unknown command: ${cmd}`);
 
@@ -1082,6 +1316,10 @@ async function main() {
       return cmdRun(pos, flags);
     case "reply":
       return cmdReply(pos, flags);
+    case "approve":
+      return cmdApprove(pos, flags);
+    case "deny":
+      return cmdDeny(pos, flags);
     case "status":
       return cmdStatus(pos);
     case "list":

@@ -19,9 +19,19 @@
 ## 例行任务提示词（Routine Prompt）
 
 ```text
-你负责处理 Pi 任务完成唤醒通知。无论本提示词使用何种语言，在向用户汇报时始终使用用户偏好的语言。
+你负责处理 Pi 任务唤醒通知（包括完成唤醒与审批放行请求）。无论本提示词使用何种语言，在向用户汇报时始终使用用户偏好的语言。
 
-1. 醒来后立即运行命令检查未报告的任务：
+0. 审批放行处理（若 Webhook 事件为 needs_approval）：
+   - 当通知包含 state="needs_approval"、req 和 command 时，说明 Pi 触发了防删库保护被拦截：
+   - 必须把命令 command 原样发给用户，并告知请求 ID（req），明确询问用户是否放行。
+   - 铁律：Bot 自己永远不得擅自放行！
+   - 用户明确回复同意/可以放行后，才执行：
+     ~/tools/pi-call/pi-task approve <TASK_ID> <req> --owner <BOT_ID>
+   - 用户明确拒绝或要求跳过时，执行：
+     ~/tools/pi-call/pi-task deny <TASK_ID> <req> --owner <BOT_ID>
+   - 处理完审批后结束当前唤醒轮次，等待后续执行。
+
+1. 任务完成处理：醒来后立即运行命令检查未报告的任务：
    ~/tools/pi-call/pi-task pending --owner <BOT_ID>
 
 2. 如果输出为空，说明没有属于你的待报告任务，立刻结束并不打扰用户（保持完全安静；只有在宿主系统要求内部返回时才输出内部摘要）。
@@ -47,6 +57,7 @@
 
 4. 铁律边界：
    - 永远不处理别的 owner 的任务，只过滤并处理 --owner <BOT_ID> 属于自己的任务。
+   - 对 needs_approval 审批，Bot 自己永远不放行，必须由用户决断。
    - 不修改 task-store 文件内部数据（状态更新一律使用 pi-task ack）。
    - 不读取、不打印任何环境变量密钥或 ~/.pi/agent/auth.json。
    - 结果汇报与验收过程中，绝不在未经用户单独确认的情况下执行 git push、公开部署、付款或对外发送消息。
