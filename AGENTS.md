@@ -126,7 +126,7 @@ cd /tmp/grokbot-and-pi
    ```bash
    ~/tools/pi-call/pi-task run /tmp "在 /tmp/gap-smoke.txt 中写入 gap-ok 并自查结束" --session smoke-gap --owner <BOT_ID> --notify-prefix <BOT>
    ```
-2. 向用户简要说明已派发最小任务，**并立即结束当前对话轮次**，等待 Webhook 单独唤醒。
+2. 向用户简要说明已派发最小任务，**不要结束当前轮**，用一次长时间阻塞的 AwaitShell 等它跑完（Bot 空闲时电脑可能睡眠或重启，会冻住 Pi）；Webhook 唤醒只是兜底。
 3. **被 Webhook 唤醒后**：
    - 运行检查自身任务：
      ```bash

@@ -31,7 +31,9 @@ Bot 的 agent id，在 `/home/box/agent-data/agents/<ID>/profile.json` 的目录
 - 工作目录选最小的（项目目录或 /tmp/<名>），不要 / 或整个 home。
 - 只读的活加 `--no-write`；不需要联网加 `--no-web`；难活才 `--thinking high`。
 - 追加要求用 `pi-task reply <ID> '<补充>' --owner <ID>`，校验 owner 并沿用同一会话与目录。
-- 派完告诉用户「已派出」，然后**立刻结束当前轮**，等 webhook 单独叫醒。
+- 派完告诉用户「已派出」，然后**不要结束当前轮**：Grok Bot 的电脑在 Bot 空闲时会睡眠甚至重启，Pi 会跟着被冻住或杀掉。用一次长时间阻塞的 AwaitShell（单次最长约 13 分钟，不要轮询、不要 sleep）等这个后台 Shell 跑完，跑完立刻验收。挂着等基本不耗 Bot 额度。
+- 一次等不完就再等一次；用户发来新消息时先回他，再接着等。
+- webhook 只是兜底：万一这一轮还是结束了，它会把 Bot 单独叫醒。
 
 ## 3. 等结果与审批放行
 - 正常完成：pi-task 结束时 POST `{source,id,owner,state,exit_code}` 到 webhook，例行任务把 Bot 单独叫醒。
@@ -43,6 +45,8 @@ Bot 的 agent id，在 `/home/box/agent-data/agents/<ID>/profile.json` 的目录
 - 兜底：每次醒来、而且派过活，就跑 `pi-task pending --owner <ID>`。
 - 看进度：`pi-task status <ID>`、`pi-task log <ID> -n 20`；取消：`pi-task cancel <ID>`。
 - 硬盘上的 `~/.pi/tasks/<ID>/` 才是真相；漏了通知不要重跑。
+- 被电脑重启打断：`pi-task status` 显示 `interrupted`，或者显示 running 但进程已经不在了（日志很久没有新事件）。这时先 `pi-task cancel <ID>` 清掉旧状态（如果它说 not running 就跳过），再用 `pi-task reply <ID> '电脑重启打断了你，接着做剩下的…' --owner <ID>` 在原会话续跑，已经做好的不要重做。
+- 空闲超时（默认 300 秒没有新事件）会把任务判为 failed 并通知；多半是网络或模型服务断了，先查通路，再用 reply 续跑。
 
 ## 4. 验收并确认
 1. 读 `~/.pi/tasks/<ID>/result.md`，再亲自检查产物、diff 或测试。Pi 的回复只是声称，不算证据。
