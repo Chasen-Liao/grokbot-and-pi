@@ -24,8 +24,9 @@ const SESSION_DIR =
   process.env.PI_TASK_SESSION_DIR || join(homedir(), ".pi", "agent", "sessions", "tasks");
 const PI_BIN = process.env.PI_BIN || "pi";
 
-const DEFAULT_MODEL = process.env.PI_TASK_MODEL || "magpie/antigravity/gemini-3.8-flash";
+const DEFAULT_MODEL = process.env.PI_TASK_MODEL || null;
 const DEFAULT_THINKING = process.env.PI_TASK_THINKING || "medium";
+const DEFAULT_NOTIFY_PREFIX = process.env.PI_TASK_NOTIFY_PREFIX || null;
 const DEFAULT_TIMEOUT = 300; // seconds, same default as pi-call.mjs
 const EVENT_TEXT_MAX = 500;
 const TERMINAL = new Set(["done", "failed", "cancelled", "interrupted"]);
@@ -289,10 +290,13 @@ function piArgs(session, model, thinking, write, web) {
     "--session-id", session,
     "--name", session,
   ];
-  const [provider, ...rest] = String(model).split("/");
-  if (provider && rest.length) args.push("--provider", provider, "--model", rest.join("/"));
-  else args.push("--model", String(model));
-  args.push("--thinking", thinking || DEFAULT_THINKING);
+  if (model) {
+    const [provider, ...rest] = String(model).split("/");
+    if (provider && rest.length) args.push("--provider", provider, "--model", rest.join("/"));
+    else args.push("--model", String(model));
+  }
+  const th = thinking || DEFAULT_THINKING;
+  if (th) args.push("--thinking", th);
   const tools =
     (write ? "read,grep,find,ls,bash,edit,write" : "read,grep,find,ls") +
     (web ? ",web_search,fetch_content,get_search_content" : "");
@@ -324,19 +328,33 @@ function textOf(message) {
   return typeof message.content === "string" ? message.content : "";
 }
 
+function getNotifyConfig(prefix) {
+  const p = prefix || process.env.PI_TASK_NOTIFY_PREFIX || null;
+  if (p) {
+    const url = process.env[`${p}_PI_NOTIFY_URL`] || process.env[`${p.toUpperCase()}_PI_NOTIFY_URL`];
+    const key = process.env[`${p}_PI_NOTIFY_KEY`] || process.env[`${p.toUpperCase()}_PI_NOTIFY_KEY`];
+    return { url, key };
+  }
+  return {
+    url: process.env.PI_NOTIFY_URL,
+    key: process.env.PI_NOTIFY_SECRET,
+  };
+}
+
 // Run one prompt turn inside a task, stream events, update status, exit.
-// Notify the Bot on completion: POST {source,id,owner,state,exit_code} to PI_NOTIFY_URL.
+// Notify the Bot on completion: POST {source,id,owner,state,exit_code} to webhook URL.
 // A detached notifier receives the Bearer secret via environment, not argv; skip if unconfigured.
-function notify(dir, id, owner, state, code) {
-  const url = process.env.PI_NOTIFY_URL, key = process.env.PI_NOTIFY_SECRET;
+function notify(dir, id, owner, state, code, notifyPrefix) {
+  const { url, key } = getNotifyConfig(notifyPrefix);
   if (!url || !key || process.env.PI_NOTIFY_OFF) return;
   const js = `const [u,b,f]=process.argv.slice(1);const fs=require("fs");
-fetch(u,{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+process.env.PI_NOTIFY_SECRET},body:b,signal:AbortSignal.timeout(15000)})
+fetch(u,{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+process.env.__PI_NOTIFY_SECRET},body:b,signal:AbortSignal.timeout(15000)})
 .then(r=>fs.appendFileSync(f,JSON.stringify({ts:new Date().toISOString(),type:"notify",text:"http "+r.status})+"\\n"))
 .catch(e=>fs.appendFileSync(f,JSON.stringify({ts:new Date().toISOString(),type:"notify",text:"error "+String(e.message||e).slice(0,200)})+"\\n"));`;
   try {
+    const notifyEnv = { ...process.env, __PI_NOTIFY_SECRET: key };
     const c = spawn(process.execPath, ["-e", js, url, JSON.stringify({ source: "pi-task", id, owner: owner ?? null, state, exit_code: code }), join(dir, "events.jsonl")],
-      { detached: true, stdio: "ignore", env: process.env });
+      { detached: true, stdio: "ignore", env: notifyEnv });
     c.unref();
   } catch { /* Notification failure does not affect results; pending provides recovery. */ }
 }
@@ -372,6 +390,11 @@ function execute(id, prompt, timeoutSec) {
   // Remove notification URL/secret and unrelated cloud tokens from the Pi child's environment.
   const piEnv = { ...process.env };
   delete piEnv.PI_NOTIFY_URL; delete piEnv.PI_NOTIFY_SECRET; delete piEnv.CLOUDFLARE_API_TOKEN;
+  for (const k of Object.keys(piEnv)) {
+    if (k.endsWith("_PI_NOTIFY_URL") || k.endsWith("_PI_NOTIFY_KEY")) {
+      delete piEnv[k];
+    }
+  }
   const child = spawn(PI_BIN, args, {
     cwd: status.cwd,
     env: piEnv,
@@ -447,7 +470,8 @@ function execute(id, prompt, timeoutSec) {
       }
     }
     appendEvent(dir, "task_end", undefined, `state=${state} exit=${code}`);
-    notify(dir, id, st ? st.owner ?? null : status.owner ?? null, state, code);
+    const notifyPrefix = st?.notify_prefix ?? status.notify_prefix ?? null;
+    notify(dir, id, st ? st.owner ?? null : status.owner ?? null, state, code, notifyPrefix);
     const out = `STATE ${state}\nRESULT ${join(dir, "result.md")}\n`;
     process.stdout.write(out);
     if (code !== EXIT.done) {
@@ -725,6 +749,13 @@ function cmdRun(pos, flags) {
   const session = cleanSession(flags.session);
   assertSessionFree(session);
   const owner = taskOwner(flags);
+  const notifyPrefix =
+    typeof flags["notify-prefix"] === "string" && flags["notify-prefix"]
+      ? flags["notify-prefix"]
+      : DEFAULT_NOTIFY_PREFIX;
+  const model = typeof flags.model === "string" && flags.model ? flags.model : DEFAULT_MODEL;
+  const thinking =
+    typeof flags.thinking === "string" && flags.thinking ? flags.thinking : DEFAULT_THINKING;
 
   const id = newTaskId(session);
   const status = {
@@ -732,7 +763,8 @@ function cmdRun(pos, flags) {
     session,
     owner,
     cwd,
-    model: typeof flags.model === "string" && flags.model ? flags.model : DEFAULT_MODEL,
+    model,
+    notify_prefix: notifyPrefix,
     state: "queued",
     pid: null,
     created_at: iso(),
@@ -743,8 +775,7 @@ function cmdRun(pos, flags) {
     reported: false,
     runs: [],
     options: {
-      thinking:
-        typeof flags.thinking === "string" && flags.thinking ? flags.thinking : DEFAULT_THINKING,
+      thinking,
       write: !flags["no-write"],
       web: !flags["no-web"],
     },
@@ -784,7 +815,7 @@ function cmdStatus(pos) {
     `state:    ${status.state}`,
     `owner:    ${ownerLabel(status)}`,
     `session:  ${status.session}`,
-    `model:    ${status.model}`,
+    `model:    ${status.model || "(default)"}`,
     `cwd:      ${status.cwd}`,
     `created:  ${lt(status.created_at)} (${humanAge(status.created_at)} ago)`,
     `started:  ${lt(status.started_at)}`,
@@ -959,7 +990,7 @@ function cmdAck(pos, flags) {
 
 // ------------------------------------------------------------------- argv
 
-const VALUE_FLAGS = new Set(["session", "timeout", "model", "thinking", "n", "owner"]);
+const VALUE_FLAGS = new Set(["session", "timeout", "model", "thinking", "n", "owner", "notify-prefix"]);
 const BOOL_FLAGS = new Set(["no-write", "no-web", "all", "help"]);
 
 function parseArgs(argv) {
@@ -1003,6 +1034,7 @@ function parseArgs(argv) {
 const USAGE = `usage:
   pi-task run <cwd> "<prompt>" --session <name> [--owner <agent id>] [--timeout sec]
               [--model provider/model] [--thinking off|low|medium|high]
+              [--notify-prefix <name>]
               [--no-write] [--no-web]
   pi-task reply <id> "<prompt>" [--timeout sec]      (retains the original owner)
   pi-task status <id>
@@ -1012,14 +1044,18 @@ const USAGE = `usage:
   pi-task pending [--owner <agent id>|none]
   pi-task ack <id> [<id>...] [--owner <agent id>|none]
 
-  --owner <id>  dispatching agent; defaults to PI_TASK_OWNER, or null with a warning
-  --owner none  match only tasks with owner=null
+  --owner <id>            dispatching agent; defaults to PI_TASK_OWNER, or null with a warning
+  --owner none            match only tasks with owner=null
+  --notify-prefix <name>  read webhook URL and key from <NAME>_PI_NOTIFY_URL and <NAME>_PI_NOTIFY_KEY
 
 env:
-  PI_TASK_DIR          task store (default ~/.pi/tasks)
-  PI_TASK_SESSION_DIR  Pi session dir (default ~/.pi/agent/sessions/tasks)
-  PI_TASK_OWNER        default owner for run (fallback when --owner is absent)
-  PI_BIN               pi executable (default: pi)
+  PI_TASK_DIR            task store (default ~/.pi/tasks)
+  PI_TASK_SESSION_DIR    Pi session dir (default ~/.pi/agent/sessions/tasks)
+  PI_TASK_OWNER          default owner for run (fallback when --owner is absent)
+  PI_TASK_MODEL          default model for run (fallback when --model is absent)
+  PI_TASK_THINKING       default thinking level (default: medium)
+  PI_TASK_NOTIFY_PREFIX  default notify prefix (fallback when --notify-prefix is absent)
+  PI_BIN                 pi executable (default: pi)
 `;
 
 async function main() {

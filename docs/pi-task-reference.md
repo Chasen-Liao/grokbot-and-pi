@@ -18,7 +18,8 @@ Commands below assume pi-task is installed on PATH; otherwise use
 
 ```text
 pi-task run <cwd> "<prompt>" --session <name> --owner <agent-id> [--timeout sec]
-            [--model provider/model] [--thinking off|low|medium|high] [--no-write] [--no-web]
+            [--model provider/model] [--thinking off|low|medium|high]
+            [--notify-prefix <name>] [--no-write] [--no-web]
 pi-task reply <ID> "<prompt>" [--timeout sec]
 pi-task status <ID>
 pi-task list [--all] [--owner <id>|none]
@@ -166,8 +167,11 @@ reply to a running task are refused with exit code 1.
 | PI_TASK_DIR | ~/.pi/tasks | Task store |
 | PI_TASK_SESSION_DIR | ~/.pi/agent/sessions/tasks | Pi session storage; changing it prevents finding old sessions |
 | PI_TASK_OWNER | Empty | Default owner for run |
-| PI_NOTIFY_URL | Empty | Completion webhook endpoint |
-| PI_NOTIFY_SECRET | Empty | Raw notification Bearer token, supplied through environment |
+| PI_TASK_MODEL | Empty | Default model when --model is absent (if empty, Pi uses its own default) |
+| PI_TASK_THINKING | medium | Default thinking level |
+| PI_TASK_NOTIFY_PREFIX | Empty | Default notify prefix when --notify-prefix is absent |
+| PI_NOTIFY_URL | Empty | Completion webhook endpoint (used when notify prefix is not set) |
+| PI_NOTIFY_SECRET | Empty | Raw notification Bearer token (used when notify prefix is not set) |
 | PI_NOTIFY_OFF | Empty | Set to 1 to disable notifications temporarily |
 | PI_BIN | pi | Pi executable |
 
