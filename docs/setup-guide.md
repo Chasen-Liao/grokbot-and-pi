@@ -7,8 +7,10 @@ triggered by webhook, and a secure facility for supplying environment variables.
 UI labels and available features may vary. Pi runs on that same cloud computer,
 not on your personal laptop. User-facing replies should use the user's language.
 
-The goal: delegate file processing, coding, drafts or research, then wake the Bot
-to verify and report the result without keeping the conversation turn open.
+The goal: delegate heavy file processing, coding, drafts, or research to Pi on
+the local machine. The Bot waits in the current turn using a long blocking wait
+to inspect and report results immediately upon completion (preventing host sleep
+from freezing Pi), while Webhook routines serve as a reliable fallback.
 
 ## 1. Lifecycle
 
@@ -42,8 +44,11 @@ flowchart TD
 - Recover: notifications are best-effort. Disk state remains authoritative.
 
 A background shell command finishing does not itself guarantee a new Bot turn.
-The original conversation may already have ended. Webhooks can also be missed;
-check pending on subsequent wakeups rather than reexecuting the task.
+To avoid having the host computer sleep and freeze Pi, the Bot should stay in the
+current turn using a long blocking wait (such as AwaitShell) rather than exiting
+immediately. Webhook routines provide a reliable wakeup if the turn does end.
+Webhooks can also be missed; check pending on subsequent wakeups rather than
+reexecuting the task.
 
 ## 2. Install and authenticate
 
@@ -79,10 +84,10 @@ internally; this restriction concerns exposing credentials through agent tools.
 credentials. Listing a model does not prove that a request will authenticate;
 use the smoke test to verify actual execution.
 
-The default model in pi-run and pi-task is `deepseek/deepseek-flash`. For another
-account/model, edit the pi-run wrapper's model or use pi-call directly; pi-task
-supports `run --model provider/model`. Do not assume every provider/account has
-this particular model or subscription login option.
+pi-task uses Pi's configured default model if --model is omitted, or reads
+PI_TASK_MODEL, or accepts an explicit `run --model provider/model`. pi-run is a
+convenience wrapper defaulting to `deepseek/deepseek-flash`. Do not assume every
+provider/account has this particular model or subscription login option.
 
 ### 2.3 Copy the scripts
 
@@ -134,14 +139,17 @@ profile path, such as `/home/box/agent-data/agents/YOUR_AGENT_ID/profile.json`.
 
 ## 4. Supply notification credentials securely
 
-Find the routine's webhook URL and key in the host interface. Use the secure
-input facility to supply:
+Find the routine's webhook URL and key in the host interface. For multi-Bot setups,
+prefix variables with your bot identifier (e.g., `<BOT>_PI_NOTIFY_URL` and `<BOT>_PI_NOTIFY_KEY`):
 
 | Variable | Value |
 | --- | --- |
-| PI_NOTIFY_URL | Webhook endpoint URL |
-| PI_NOTIFY_SECRET | Raw Bearer token/key, without a Bearer prefix |
-| PI_TASK_OWNER | Optional default dispatching Bot ID; explicit --owner is preferable |
+| `<BOT>_PI_NOTIFY_URL` (or `PI_NOTIFY_URL`) | Webhook endpoint URL |
+| `<BOT>_PI_NOTIFY_KEY` (or `PI_NOTIFY_SECRET`) | Raw Bearer token/key, without a Bearer prefix |
+| `PI_TASK_OWNER` | Optional default dispatching Bot ID; explicit `--owner` is preferable |
+
+Pass `--notify-prefix <BOT>` when invoking `pi-task run`. The runner reads `<BOT>_PI_NOTIFY_URL`
+and `<BOT>_PI_NOTIFY_KEY` automatically and cleans notification secrets from child processes.
 
 - Do not put secrets in scripts, task files, a repository, prompts or command-line arguments.
 - Verify the endpoint accepts `Authorization: Bearer ...`; do not confuse a
@@ -185,10 +193,11 @@ If no notification arrives, check environment availability and the routine's
 configuration privately. The task result is still on disk. Use pending to
 finish reporting; a failed notification is not a reason to rerun the task.
 
-## 6. Install the Bot skill
+## 6. Install the Bot skills
 
-Install [skills/pi-agent/SKILL.md](../skills/pi-agent/SKILL.md) using your host's
-skill mechanism, or include its rules in the Bot's instructions. It covers:
+Install [skills/grokbot-pi-dispatch/SKILL.md](../skills/grokbot-pi-dispatch/SKILL.md)
+and [skills/grokbot-pi-setup/SKILL.md](../skills/grokbot-pi-setup/SKILL.md) using your host's
+skill mechanism, or include their rules in the Bot's instructions. They cover:
 
 - Short, self-contained prompts with input/output paths and acceptance criteria.
 - Explicit owner IDs and the Shell tool's background mode.

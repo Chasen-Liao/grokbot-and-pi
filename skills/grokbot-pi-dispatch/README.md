@@ -1,6 +1,6 @@
 # 🚚 grokbot-pi-dispatch
 
-Grok Bot 的通用派活方法：**Bot 写任务书 → `pi-task` 后台派给 Pi → 跑完 webhook 叫醒 Bot → Bot 验收并 ack**。任务有 ID、状态和归属 Bot（owner），不漏报、不串台。基于 [robbin/grokbot-local-agent](https://github.com/robbin/grokbot-local-agent) 改进而来。
+Grok Bot 的通用派活方法：**Bot 写任务书 → `pi-task` 后台派给 Pi → 跑完验收（或 Webhook 兜底叫醒）并 ack**。任务有 ID、状态和归属 Bot（owner），不漏报、不串台。基于 [robbin/grokbot-local-agent](https://github.com/robbin/grokbot-local-agent) 改进而来。
 
 **任务书只写五件事**：做什么、产物路径、完成标准、边界（限定目录、禁止删除）、自查一次就结束。
 
@@ -11,7 +11,7 @@ Grok Bot 的通用派活方法：**Bot 写任务书 → `pi-task` 后台派给 P
 npx skills add Chasen-Liao/Chasen-Skills --skill grokbot-pi-dispatch --global --yes
 ```
 
-**触发**：Bot 遇到超过两三步的执行活时自动读；也可以说「派给 Pi」「用 pi -p 跑」。
+**触发**：Bot 遇到超过两三步的执行活时自动读；也可以说「派给 Pi」「让 Pi 来做」「按 grokbot-pi-dispatch 派活」。
 
 派活示例：
 ```bash

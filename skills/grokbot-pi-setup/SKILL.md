@@ -55,7 +55,7 @@ PI_NOTIFY_OFF=1 ~/tools/pi-call/pi-task run /tmp 'Reply with only OK' --session 
 2. 让用户用密钥输入卡，把 webhook 地址和 key 存成环境变量 `<BOT>_PI_NOTIFY_URL`、`<BOT>_PI_NOTIFY_KEY`（不要贴进聊天或文件）。多个 Bot 各用各的变量名前缀。派活时只需加上 `--notify-prefix <BOT>`，`pi-task` 会自动读取对应通知配置并完成回调，无需手动映射环境变量。
 
 ## 4. 端到端验收
-派一个最小任务（比如「在 /tmp/pi-test.txt 写一行 hello」），按 grokbot-pi-dispatch 的命令后台跑、结束当前轮。确认：Bot 被单独叫醒、`pi-task pending` 里有它、文件内容正确，ack 后 pending 变空。
+派一个最小任务（比如「在 /tmp/pi-test.txt 写一行 hello」），按 grokbot-pi-dispatch 的命令后台跑，不要结束当前轮，用长时间阻塞等待跑完立刻验收（Webhook 唤醒作为兜底）。确认：`pi-task pending` 里有它、文件内容正确，ack 后 pending 变空。
 
 ## 风险，要跟用户说清楚
 - Pi 默认没有沙箱，能改电脑上的任何文件。任务里必须限定目录、禁止删除。

@@ -6,7 +6,7 @@ events, prompts and the final reply. The process stays in the foreground until
 finished; the Bot launches it using its Shell tool's background mode.
 
 - Node 22+, no third-party dependencies.
-- Default: deepseek/deepseek-flash, thinking high, read/write/exec and web tools.
+- Default: Pi's configured default model (or PI_TASK_MODEL), thinking medium, read/write/exec and web tools.
 - IDs: `<session>-<YYYYMMDD-HHMMSS>`; the session name is also the Pi session ID.
 - Owner identifies the dispatching Bot; pending/list/ack support owner filters.
 - The wrapper does not read authentication files; Pi handles model authentication.

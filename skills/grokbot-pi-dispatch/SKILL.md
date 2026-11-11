@@ -1,6 +1,6 @@
 ---
 name: grokbot-pi-dispatch
-description: Grok Bot 要做超过两三步的执行活（写代码、改文件、扫目录、整理或生成内容）时，开干前读这个：Bot 只写任务书、用 pi-task 后台派给电脑上的 Pi、被 webhook 叫醒后验收并确认。还没装好先看 grokbot-pi-setup。
+description: Grok Bot 要做超过两三步的执行活（写代码、改文件、扫目录、整理或生成内容）时，开干前读这个：Bot 只写任务书、用 pi-task 后台派给电脑上的 Pi、跑完或被 webhook 叫醒后验收并确认。还没装好先看 grokbot-pi-setup。
 ---
 
 # grokbot-pi-dispatch：Bot 写任务，Pi 干活，Bot 验收
