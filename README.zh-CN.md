@@ -1,4 +1,8 @@
-# GAP — Grokbot And Pi
+<p align="center">
+  <img src="docs/logo.png" alt="GAP logo" width="128">
+</p>
+
+<h1 align="center">GAP — Grokbot And Pi</h1>
 
 [English](README.md) | 简体中文
 
@@ -16,23 +20,39 @@
 
 ## 架构与闭环工作流
 
-![GAP Architecture](docs/architecture.png)
+### 一图看懂
 
-GAP 包含清晰的 4 步闭环：
+<p align="center">
+  <img src="docs/workflow.jpg" alt="Bot 派活、等待、验收，Webhook 兜底" width="420">
+</p>
+
+### 架构
 
 ```mermaid
-flowchart TD
-  B["Grok Bot"] -->|"pi-task run --owner <BOT_ID>"| T["pi-task（后台任务管理器）"]
-  T -->|"RPC 会话"| P["Pi Coding Agent（同机运行）"]
-  P -->|"文件 / Shell / 工具"| W["工作区与模型"]
-  P -->|"事件流 / 状态"| T
-  T -->|"持久化状态"| D["~/.pi/tasks/<ID>/"]
-  B -->|"AwaitShell（本轮长时间等待）"| B
-  T -.->|"完成通知 / needs_approval"| H["Webhook 例行任务（唤醒兜底）"]
-  H -.->|"对话轮次结束时唤醒"| B
-  B -->|"pi-task pending --owner <BOT_ID>"| C["读 result.md 亲自核验 diff 与测试"]
-  C -->|"pi-task ack <ID> --owner <BOT_ID>"| R["向用户汇报真实证据并确认"]
+flowchart LR
+  U(["你"]) -->|对话| B
+  subgraph BOX["Bot 的电脑（共用 Linux 机器）"]
+    B["Grok Bot<br/>规划 + 验收"]
+    T["pi-task<br/>任务管理"]
+    PF["pi-preflight<br/>模型通路预检"]
+    G["pi-guard<br/>拦删库跑路"]
+    P["Pi coding agent<br/>干活"]
+    D[("~/.pi/tasks/ID<br/>状态、事件、result.md")]
+    B -->|"1. run --owner"| T
+    T -->|先预检| PF
+    T -->|RPC 会话| P
+    P -.->|每次工具调用| G
+    T -->|落盘| D
+    B -->|"2. 本轮等待"| T
+    D -->|"3. pending、验收、ack"| B
+  end
+  P -->|调用模型| M["模型<br/>API key / 中转站 / 网关"]
+  T -.->|"跑完或 needs_approval<br/>（仅兜底）"| W["Webhook 例行任务"]
+  W -.->|唤醒| B
+  G -.->|被拦命令| U
 ```
+
+GAP 包含清晰的 4 步闭环：
 
 1. **Bot 派活（`pi-task run`）**：Grok Bot 编写简明且边界明确的任务书，通过后台模式启动 `pi-task run <工作目录> '<任务书>' --session <会话名> --owner <BOT_ID> --notify-prefix <BOT>`。
 2. **本轮长等待（防宿主机休眠冻结）**：Bot 派发后**不要结束当前轮次**。因为云端电脑在 Bot 空闲时容易睡眠或重启（导致后台 Pi 进程被冻住或杀掉），Bot 在本轮用一次长时间阻塞的等待（例如 `AwaitShell`，单次最长约 13 分钟）等 Pi 执行完毕。阻塞等待几乎不消耗 Bot 模型额度，同时能保持宿主机唤醒。
@@ -164,7 +184,8 @@ grokbot-and-pi/
 ├── routines/
 │   └── pi-task-notify.md      # Grok Bot 平台的 Webhook Routine 提示词模板
 ├── docs/
-│   ├── architecture.png       # 架构示意图
+│   ├── logo.png               # 项目图标
+│   ├── workflow.jpg           # 流程示意图
 │   ├── quota.md               # 模型额度接入指南（官方 API、中转站、自建 Magpie 网关）
 │   ├── security.md            # pi-guard 防护规则细节与人机审批放行机制说明
 │   ├── setup-guide.md         # 详细部署、内部生命周期与存储结构参考文档

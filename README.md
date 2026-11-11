@@ -1,4 +1,8 @@
-# GAP — Grokbot And Pi
+<p align="center">
+  <img src="docs/logo.png" alt="GAP logo" width="128">
+</p>
+
+<h1 align="center">GAP — Grokbot And Pi</h1>
 
 English | [简体中文](README.zh-CN.md)
 
@@ -16,23 +20,39 @@ Let Grok Bot delegate heavy coding, batch file editing, and long document proces
 
 ## Architecture & Closed-Loop Workflow
 
-![GAP Architecture](docs/architecture.png)
+### At a glance
 
-GAP operates as a closed 4-step loop:
+<p align="center">
+  <img src="docs/workflow.jpg" alt="Bot dispatches, waits, verifies; webhook as fallback" width="420">
+</p>
+
+### Architecture
 
 ```mermaid
-flowchart TD
-  B["Grok Bot"] -->|"pi-task run --owner <BOT_ID>"| T["pi-task (Background runner)"]
-  T -->|"RPC session"| P["Pi Coding Agent (Local)"]
-  P -->|"Files / Shell / Tools"| W["Workspace & Model"]
-  P -->|"Events / Status"| T
-  T -->|"Persist state"| D["~/.pi/tasks/<ID>/"]
-  B -->|"AwaitShell (Wait in-turn)"| B
-  T -.->|"Completion / needs_approval"| H["Webhook Routine (Fallback)"]
-  H -.->|"Wake on turn exit"| B
-  B -->|"pi-task pending --owner <BOT_ID>"| C["Inspect result.md & verify diff/tests"]
-  C -->|"pi-task ack <ID> --owner <BOT_ID>"| R["Report verified outcome to user"]
+flowchart LR
+  U(["You"]) -->|chat| B
+  subgraph BOX["Bot computer (shared Linux box)"]
+    B["Grok Bot<br/>plan + verify"]
+    T["pi-task<br/>task runner"]
+    PF["pi-preflight<br/>model-path check"]
+    G["pi-guard<br/>blocks rm -rf / etc."]
+    P["Pi coding agent<br/>does the work"]
+    D[("~/.pi/tasks/ID<br/>state, events, result.md")]
+    B -->|"1. run --owner"| T
+    T -->|check first| PF
+    T -->|RPC session| P
+    P -.->|every tool call| G
+    T -->|persist| D
+    B -->|"2. wait in-turn"| T
+    D -->|"3. pending, verify, ack"| B
+  end
+  P -->|API calls| M["Model<br/>API key / relay / gateway"]
+  T -.->|"done or needs_approval<br/>(fallback only)"| W["Webhook routine"]
+  W -.->|wake| B
+  G -.->|blocked command| U
 ```
+
+GAP operates as a closed 4-step loop:
 
 1. **Dispatch (`pi-task run`)**: Grok Bot drafts a concise, self-contained task specification and launches it in the background using `pi-task run <dir> '<prompt>' --session <name> --owner <BOT_ID> --notify-prefix <BOT>`.
 2. **Wait in-turn (Avoid sleep freeze)**: The Bot **does not exit the current turn**. Because cloud agent host machines often sleep or restart when idle (which freezes or kills background worker processes), the Bot holds an extended blocking wait (`AwaitShell`, up to ~13 minutes) until Pi finishes. Waiting in-turn consumes virtually zero Bot model quota while keeping the machine awake.
@@ -164,7 +184,8 @@ grokbot-and-pi/
 ├── routines/
 │   └── pi-task-notify.md      # Webhook Routine prompt template for Grok Bot
 ├── docs/
-│   ├── architecture.png       # Architecture diagram
+│   ├── logo.png               # Project icon
+│   ├── workflow.jpg           # Illustrated workflow
 │   ├── quota.md               # Model quota setup (official API, relays, Magpie gateway)
 │   ├── security.md            # pi-guard specifications and human approval workflow
 │   ├── setup-guide.md         # Detailed lifecycle, storage, and manual setup guide
